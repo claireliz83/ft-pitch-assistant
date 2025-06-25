@@ -1,61 +1,137 @@
+import streamlit as st
+import pandas as pd
+import openai
+import os
 
-# FT Pitch Assistant
+# --- Configuration ---
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-An AI-powered Streamlit app to help craft tailored pitches to Financial Times journalists.
+# --- Load Journalist Data ---
+@st.cache_data
+def load_journalists():
+    return pd.read_csv("journalists.csv", encoding="utf-8")
 
-## Features
+journalists_df = load_journalists()
 
-- Suggests the most relevant FT journalists based on your story idea
-- Generates a concise, persuasive email pitch customized for the selected journalist
-- Scores the pitch on clarity, relevance, persuasiveness, and brevity
-- Provides actionable improvement suggestions for your pitch
+def safe_display_text(text):
+    # Encode-decode to remove problematic unicode chars safely
+    return text.encode('utf-8', errors='ignore').decode('utf-8')
 
-## Setup
+# --- UI ---
+st.title("🎮 FT Pitch Assistant")
+st.markdown("Write tailored pitches to Financial Times journalists with AI assistance.")
 
-### Requirements
+story_idea = st.text_area("Enter your story idea", placeholder="e.g. How Gen Z is reshaping luxury travel")
 
-- Python 3.8+
-- OpenAI API key ([Get your key here](https://platform.openai.com/account/api-keys))
+suggest_journalist = st.checkbox("Suggest journalist based on story idea")
 
-### Installation
+if suggest_journalist and story_idea:
+    with st.spinner("Matching your story to journalists..."):
+        match_prompt = f"""
+        Based on the story idea below, suggest the 3 most relevant journalists from this list.
+        Return a list of their names only.
 
-1. Clone or download this repo.
+        Story Idea:
+        "{story_idea}"
 
-2. Install dependencies:
+        Journalists:
+        {journalists_df[['name', 'beat', 'recent_article_title']].to_string(index=False)}
+        """
 
-```bash
-pip install -r requirements.txt
-```
+        match_response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": match_prompt}]
+        )
 
-3. Add your OpenAI API key as an environment variable:
+        suggested_names = match_response['choices'][0]['message']['content'].split("\n")
+        suggested_names = [name.strip("- •* ") for name in suggested_names if name.strip()]
 
-```bash
-export OPENAI_API_KEY="your-openai-api-key"
-```
+        st.markdown("### 🔍 Suggested Journalists")
+        st.write(suggested_names)
 
-4. Run the app:
+        # Default to first suggested
+        if suggested_names:
+            journalist_name = suggested_names[0]
+        else:
+            journalist_name = st.selectbox("Select a journalist", journalists_df['name'])
+else:
+    journalist_name = st.selectbox("Select a journalist", journalists_df['name'])
 
-```bash
-streamlit run pitch_agent.py
-```
+if journalist_name:
+    journalist_data = journalists_df[journalists_df['name'] == journalist_name].iloc[0]
 
-### Usage
+    if st.button("Generate Pitch") and story_idea:
+        with st.spinner("Crafting your pitch..."):
+            # --- Generate Pitch ---
+            prompt = f"""
+            You are a PR assistant helping pitch a story to a Financial Times journalist.
 
-- Enter a story idea.
-- Optionally check "Suggest journalist based on story idea" to get AI recommendations.
-- Select or accept the suggested journalist.
-- Click **Generate Pitch** to get your custom pitch, feedback scores, and improvement tips.
+            - Story idea: "{story_idea}"
+            - Journalist: {journalist_data['name']}
+            - Beat: {journalist_data['beat']}
+            - Recent article: "{journalist_data['recent_article_title']}"
+            - Excerpt: "{journalist_data['recent_article_excerpt']}"
 
-## Deployment
+            Write a concise, persuasive email pitch (under 150 words) with:
+            - A subject line
+            - A strong opening hook
+            - Clear relevance to FT’s audience
+            """
 
-You can deploy this app easily on [Streamlit Cloud](https://streamlit.io/cloud) by connecting your GitHub repo and adding your OpenAI API key in the Secrets section.
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            pitch = safe_display_text(response['choices'][0]['message']['content'])
 
-## Files
+            st.markdown("### ✉️ Your Custom Pitch")
+            st.text_area("Pitch", value=pitch, height=200)
 
-- `pitch_agent.py` — Main Streamlit app
-- `journalists.csv` — List of FT journalists (update as needed)
-- `requirements.txt` — Python dependencies
+            # --- Score the Pitch ---
+            with st.spinner("Evaluating pitch quality..."):
+                score_prompt = f"""
+                You are a PR writing coach. Please rate the following pitch based on 4 criteria from 1–10:
 
----
+                1. Clarity – Is it clearly written?
+                2. Relevance – Is it relevant to the journalist’s beat and the Financial Times readership?
+                3. Persuasiveness – Does it make a compelling case to cover the story?
+                4. Brevity – Is it concise and avoids fluff (target under 150 words)?
 
-Made with ❤️ to help PR pros pitch smarter.
+                Provide scores and a brief reason for each.
+
+                PITCH:
+                {pitch}
+                """
+
+                score_response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[{"role": "user", "content": score_prompt}]
+                )
+
+                evaluation = safe_display_text(score_response['choices'][0]['message']['content'])
+                st.markdown("### 📊 Pitch Quality Feedback")
+                st.markdown(evaluation)
+
+            # --- Improvement Suggestions ---
+            with st.spinner("Suggesting improvements..."):
+                suggestion_prompt = f"""
+                Act as an expert media pitching editor. Here’s a PR pitch:
+
+                ---
+                {pitch}
+                ---
+
+                Please suggest 2–3 specific improvements to make it more compelling, relevant, or concise.
+                Make each suggestion actionable (e.g., “Rephrase the hook to emphasize urgency”).
+                """
+
+                suggestion_response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[{"role": "user", "content": suggestion_prompt}]
+                )
+
+                suggestions = safe_display_text(suggestion_response['choices'][0]['message']['content'])
+                st.markdown("### 🛠️ Improvement Suggestions")
+                st.markdown(suggestions)
+    else:
+        st.info("Please enter a story idea to get started.")
