@@ -16,7 +16,7 @@ def load_journalists():
 journalists_df = load_journalists()
 
 # --- UI ---
-st.title("\ud83c\udfae FT Pitch Assistant")
+st.title("🎮 FT Pitch Assistant")
 st.markdown("Write tailored pitches to Financial Times journalists with AI assistance.")
 
 story_idea = st.text_area("Enter your story idea", placeholder="e.g. How Gen Z is reshaping luxury travel")
